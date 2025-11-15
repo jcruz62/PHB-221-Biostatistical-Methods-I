@@ -1,0 +1,59 @@
+---
+title: "PHB_221_Final_Project"
+author: "Jade Cruz"
+date: "2025-11-13"
+output: pdf_document
+---
+
+# Dataset and Libraries
+
+```{r}
+# libraries
+library(tidyverse)
+
+# dataset
+data <- read_csv("NCHS_-_Leading_Causes_of_Death__United_States.csv")
+```
+
+# Data Collection and Cleaning
+
+```{r}
+# view first few rows of data
+head(data)
+
+# check the number of rows and cols
+dim(data)
+
+# filter data
+filtered_data <- data[data$`Cause Name` == "Heart Disease", ]
+
+head(filtered_data)
+```
+
+# Explantory Analysis
+
+
+# Statistical Testing
+
+
+
+
+# Predictive Modeling
+
+
+
+
+# Evaluation and Interpretation
+
+
+
+
+
+
+
+
+
+
+
+
+
