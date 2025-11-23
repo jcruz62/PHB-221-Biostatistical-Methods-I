@@ -1,6 +1,6 @@
 ---
 title: "PHB_221_Final_Project"
-author: "Jade Cruz"
+author: "Abigail, Jade, Yinan"
 date: "2025-11-13"
 output: pdf_document
 ---
