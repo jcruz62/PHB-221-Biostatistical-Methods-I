@@ -5,12 +5,23 @@ date: "2025-11-13"
 output: pdf_document
 ---
 
+# Main Questions
+Main Question: How does the age-adjusted death rate for heart disease vary across states in the United States, and are there any observable regional or geographic trends over time?
+
+- Research Objectives:
+  - Compare state-level heart disease mortality rates
+  - Identify patterns
+  - Explore how rates change over time
+  - Determine whether areas with consistently higher mortality are geographically concentrated 
+  - Can past trends in age adjusted heart disease death rates be used to predict future state level rates?
+
 # Dataset and Libraries
 
 ```{r}
 # libraries
 library(tidyverse)
-
+library(lme4)
+library(Metrics)
 # dataset
 data <- read_csv("NCHS_-_Leading_Causes_of_Death__United_States.csv")
 ```
@@ -25,35 +36,292 @@ head(data)
 dim(data)
 
 # filter data
-filtered_data <- data[data$`Cause Name` == "Heart Disease", ]
+filtered_data <- data[data$`Cause Name` == "Heart disease", ]
 
 head(filtered_data)
+
+dim(filtered_data)
+
+# missing data
+colSums(is.na(filtered_data))
 ```
 
 # Explantory Analysis
 
+```{r}
+
+# national level
+national_data <- data |>
+  filter(`Cause Name` == "Heart disease", State == "United States")
+
+head(national_data)
+
+ggplot(data = national_data, mapping = aes(x = Year, y = `Age-adjusted Death Rate`)) +
+  geom_line() + 
+  labs(title = "National Age Adjusted Heart Disease Rate Over Time")
+
+# state level
+
+state_only <- filtered_data |>
+  filter(State != "United States") |>
+  mutate(
+    Region = case_when(
+      State %in% c("Maine", "New Hampshire", "Vermont", "Massachusetts",
+                   "Rhode Island", "Connecticut", "New York", "New Jersey",
+                   "Pennsylvania") ~ "Northeast",
+      State %in% c("Ohio", "Indiana", "Illinois", "Michigan", "Wisconsin",
+                   "Minnesota", "Iowa", "Missouri", "North Dakota", "South Dakota",
+                   "Nebraska", "Kansas") ~ "Midwest",
+      State %in% c("Delaware", "Maryland", "District of Columbia", "Virginia",
+                   "West Virginia", "North Carolina", "South Carolina", "Georgia",
+                   "Florida", "Kentucky", "Tennessee", "Alabama", "Mississippi",
+                   "Arkansas", "Louisiana", "Oklahoma", "Texas") ~ "South",
+      State %in% c("Montana", "Idaho", "Wyoming", "Colorado", "New Mexico",
+                   "Arizona", "Utah", "Nevada", "Washington", "Oregon", "California",
+                   "Alaska", "Hawaii") ~ "West"
+    )
+  )
+
+
+head(state_only)
+
+ggplot(data = state_only, mapping = aes(x = Year, y = `Age-adjusted Death Rate`)) + 
+  geom_line() + 
+  facet_wrap(~ State) +
+  labs(title = "State Age Adjusted Heart Disease Rate Over Time")
+
+
+# regional level
+regional_summary <- state_only |>
+  group_by(Region, Year) |>
+  summarise(
+    Rate = mean(`Age-adjusted Death Rate`)
+  )
+
+
+ggplot(data = regional_summary, mapping = aes(x = Year, y = Rate, color = Region)) + 
+  geom_line(linewidth = 1) +
+  labs(title = "Regional Age Adjusted Heart Disease Rate Over Time")
+
+ggplot(data = state_only, mapping = aes(x = Region, y = `Age-adjusted Death Rate`, color = Region)) +
+  geom_boxplot(staplewidth = 0.5) +
+  labs(title = "Age-Adjusted Heart Disease Mortality by Region")
+
+```
+
 
 # Statistical Testing
 
+- How does mortality vary across states, and are there regional/geographical patterns over time?
+
+- one way anova limitations:
+  - has to be done using a single year, not all years
+  - anova assumes independent groups
+  - using all years violate independence
+
+- two way anova
+
+
+- notes:
+  - https://www.geeksforgeeks.org/data-science/analysis-of-variance-anova/
+  - cook's distance
+    - How does a single observation (data pt) influece the entire model?
+    - If a data pt is removed, does the model's prediction change a lot?
+  
+```{r}
+# two way anova testing
+# * (interaction term) bc each state has their own slope, if + was used then slope for Year is the same across all states
+two_way <- aov(`Age-adjusted Death Rate` ~ State * Year, data = state_only)
+summary(two_way)
+
+# check assumptions: homoscedasticity, normalit of residuals, linearity, and influential pts
+par(mfrow = c(2,2))
+plot(two_way)
+
+D <- cooks.distance(two_way)
+sum(D > 1)
+
+
+```
 
 
 
 # Predictive Modeling
 
+- Can past trends in age adjusted heart disease death rates be used to predict future state level rates?
 
+- notes:
+  - simple linear regression wont work bc we need year and state 
+    - assumes all states share the same mean and trend over time
+  
+  - multiple linear regression year + state
+    - treats state as a categorical predictor (fixed state effects)
+    - each state getes it's own intercept (baseline level)
+    - BUT it assumes same slope for all states
+    
+  - multiple linear regression year * state 
+    - different slope per state
+
+```{r}
+# simple linear regression
+m1 <- lm(`Age-adjusted Death Rate` ~ Year, data = state_only)
+#summary(m1)
+
+
+# multiple regression +
+m2 <- m_additive <- lm(`Age-adjusted Death Rate` ~ Year + State, data = state_only)
+#summary(m2)
+
+# multiple regression *
+m3 <- lm(`Age-adjusted Death Rate` ~ Year * State, data = state_only)
+#summary(m3)
+
+# mixed model?
+
+mixed1 <- lmer(`Age-adjusted Death Rate` ~ Year + (1 | State), data = state_only)
+#summary(mixed1)
+
+mixed2 <- lmer(`Age-adjusted Death Rate` ~ Year + (Year | State), data = state_only)
+#summary(mixed2)
+
+
+# plot comparison
+
+state_only <- state_only |>
+  mutate(
+    fitted_m1 = fitted(m1),
+    fitted_m2 = fitted(m2),
+    fitted_m3 = fitted(m3),
+    fitted_mixed1 = fitted(mixed1),
+    fitted_mixed2 = fitted(mixed2)
+  )
+
+head(state_only)
+
+
+ggplot(data = state_only, mapping = aes(x = Year)) +
+  
+  # actual data 
+  geom_line(mapping = aes(y = `Age-adjusted Death Rate`, color = "Actual")) +
+  
+  # year + state
+  geom_line(mapping = aes(y = fitted_m2, color = "Fitted: Year + State"), linetype = "dashed") +
+  
+  # year * state
+  geom_line(mapping = aes(y = fitted_m3, color = "Fitted: Year * State"), linetype = "dotted") +
+  
+  facet_wrap(~ State, scales = "free_y") +
+  
+  labs(
+    title = "Comparison of (Year + State) vs Interaction (Year * State) Models",
+    y = "Age-Adjusted Heart Disease Death Rate",
+    color = ""
+  ) +
+  
+  scale_color_manual(values = c(
+    "Actual" = "black",
+    "Fitted: Year + State" = "blue",
+    "Fitted: Year * State" = "red"
+  ))
+
+
+ggplot(data = state_only, mapping = aes(x = Year)) +
+  # actual data
+  geom_line(mapping = aes(y = `Age-adjusted Death Rate`, color = "Actual")) +
+  
+  # m3
+  geom_line(aes(y = fitted_m3, color = "Fixed: Year * State"), linetype = "dashed") +
+  
+  # mixed1
+  geom_line(aes(y = fitted_mixed1, color = "Mixed: (1 | State)"), linetype = "dashed") +
+  
+  # mixed2
+  geom_line(mapping = aes(y = fitted_mixed2, color = "Mixed: (Year | State)"), linetype = "dotted") +
+  
+  facet_wrap(~ State, scales = "free_y") +
+  
+  labs(
+    title = "Actual vs Fixed-Effects and Mixed-Effects Models by State",
+    y = "Age-Adjusted Heart Disease Death Rate",
+    color = ""
+  ) +
+  
+  scale_color_manual(values = c(
+    "Actual"              = "black",
+    "Fixed: Year * State" = "blue",
+    "Mixed: (1 | State)"  = "darkgreen",
+    "Mixed: (Year | State)" = "red"
+  ))
+
+```
+
+- Train Models:
+  - 80/10/10 does not work bc we cant randomly shuffle years
+
+```{r}
+train <- state_only |>
+  filter(Year <= 2013)
+
+test <- state_only |>
+  filter(Year > 2013)
+
+# train models
+m2_train <- lm(`Age-adjusted Death Rate` ~ Year + State, data = train)
+m3_train <- lm(`Age-adjusted Death Rate` ~ Year * State, data = train)
+mixed1_train <- lmer(`Age-adjusted Death Rate` ~ Year + (1 | State), data = train)
+mixed2_train <- lmer(`Age-adjusted Death Rate` ~ Year + (Year | State), data = train)
+
+# predict on test set
+test$pred_m2 <- predict(m2_train, newdata = test)
+test$pred_m3 <- predict(m3_train, newdata = test)
+test$pred_mixed1 <- predict(mixed1_train, newdata = test)
+test$pred_mixed2 <- predict(mixed2_train, newdata = test)
+
+ggplot(data = test, mapping = aes(x = Year)) +
+  
+  geom_line(mapping = aes(y = `Age-adjusted Death Rate`, color = "Actual")) +
+  
+  geom_line(mapping = aes(y = pred_m3, color = "Predicted (m3)")) +
+  
+  geom_line(mapping = aes(y = pred_mixed1, color = "Predicted (m1)")) +
+  
+  facet_wrap(~ State, scales = "free_y") +
+  
+  labs(title = "Actual vs Predicted Heart Disease Mortality (Test Set: 2014–2017)") +
+  
+  scale_color_manual(values = c("Actual" = "black", "Predicted (m3)" = "blue", "Predicted (mixed m1)" = "red"))
+
+
+```
 
 
 # Evaluation and Interpretation
 
+- look at R^2, p vals, residuals
 
+```{r}
+# check models accuracies
+# RMSE and MAE
+rmse_m2 <- rmse(test$`Age-adjusted Death Rate`, test$pred_m2)
+mae_m2  <- mae(test$`Age-adjusted Death Rate`, test$pred_m2)
 
+rmse_m3 <- rmse(test$`Age-adjusted Death Rate`, test$pred_m3)
+mae_m3  <- mae(test$`Age-adjusted Death Rate`, test$pred_m3)
 
+rmse_mixed1 <- rmse(test$`Age-adjusted Death Rate`, test$pred_mixed1)
+mae_mixed1  <- mae(test$`Age-adjusted Death Rate`, test$pred_mixed1)
 
+rmse_mixed2 <- rmse(test$`Age-adjusted Death Rate`, test$pred_mixed2)
+mae_mixed2  <- mae(test$`Age-adjusted Death Rate`, test$pred_mixed2)
 
+# accuracies
+data.frame(
+  Model = c("m2 (Year+State)", "m3 (Year*State)", 
+            "mixed1 (1|State)", "mixed2 (Year|State)"),
+  RMSE = c(rmse_m2, rmse_m3, rmse_mixed1, rmse_mixed2),
+  MAE  = c(mae_m2, mae_m3, mae_mixed1, mae_mixed2)
+)
 
-
-
-
-
-
+```
+Between the two models, the predictions follow a smooth linear decline because the models learn long term state specific trends but it can't capture short term year to year flucatuatons. Based on the RMSE and MAE Year x State (m3) performed the best as it showed the lowest scores, whicbh means allowing each state to have its own slope improves predictive model performance. Mixed effects were a bit less accurate because it tries to make the slopes to be more similar across states. 
 
