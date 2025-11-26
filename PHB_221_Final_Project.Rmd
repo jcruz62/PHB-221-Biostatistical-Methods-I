@@ -22,6 +22,8 @@ Main Question: How does the age-adjusted death rate for heart disease vary acros
 library(tidyverse)
 library(lme4)
 library(Metrics)
+library(randomForest)
+library(alr4)
 # dataset
 data <- read_csv("NCHS_-_Leading_Causes_of_Death__United_States.csv")
 ```
@@ -283,7 +285,7 @@ ggplot(data = test, mapping = aes(x = Year)) +
   
   geom_line(mapping = aes(y = pred_m3, color = "Predicted (m3)")) +
   
-  geom_line(mapping = aes(y = pred_mixed1, color = "Predicted (m1)")) +
+  geom_line(mapping = aes(y = pred_mixed1, color = "Predicted (mixed m1)")) +
   
   facet_wrap(~ State, scales = "free_y") +
   
@@ -297,7 +299,7 @@ ggplot(data = test, mapping = aes(x = Year)) +
 
 # Evaluation and Interpretation
 
-- look at R^2, p vals, residuals
+- look at RMSE and MAE
 
 ```{r}
 # check models accuracies
@@ -323,5 +325,120 @@ data.frame(
 )
 
 ```
-Between the two models, the predictions follow a smooth linear decline because the models learn long term state specific trends but it can't capture short term year to year flucatuatons. Based on the RMSE and MAE Year x State (m3) performed the best as it showed the lowest scores, whicbh means allowing each state to have its own slope improves predictive model performance. Mixed effects were a bit less accurate because it tries to make the slopes to be more similar across states. 
+Between the two models, the predictions follow a smooth linear decline because the models learn long term state specific trends but it can't capture short term year to year flucatuatons. Based on the RMSE and MAE Year x State (m3) performed the best as it showed the lowest scores, whicbh means allowing each state to have its own slope improves predictive model performance. Mixed effects were a bit less accurate because it tries to make the slopes to be more similar across states. This means that past linear trends alone are not enough for accurate year to year predictions of state level heart disease mortality. 
 
+
+Random Forest
+```{r}
+library(randomForest)
+set.seed(54)
+train$State = factor(train$State)
+test$State = factor(test$State)
+
+rm_model = randomForest(`Age-adjusted Death Rate`~Year+State, data = train, ntree = 1000, mtry = 2, importance = T)
+
+print(rm_model)
+
+test$pred_rm = predict(rm_model, newdata=test)
+rmse_rfm = rmse(test$`Age-adjusted Death Rate`, test$pred_rm)
+mae_rfm = mae(test$`Age-adjusted Death Rate`, test$pred_rm)
+
+```
+
+```{r}
+data.frame(
+  Model = c("m2 (Year+State)", "m3 (Year*State)", 
+            "mixed1 (1|State)", "mixed2 (Year|State)", "RF (Year + State"),
+  RMSE = c(rmse_m2, rmse_m3, rmse_mixed1, rmse_mixed2, rmse_rfm),
+  MAE  = c(mae_m2, mae_m3, mae_mixed1, mae_mixed2, mae_rfm)
+)
+```
+```{r}
+# R^2
+y_test = test$`Age-adjusted Death Rate`
+y_rmf = test$pred_rm
+
+ss_res = sum((y_test - y_rmf)^2)
+ss_tot = sum((y_test-mean(y_test))^2)
+R2_rmf = 1 - ss_res/ss_tot
+
+R2_rmf
+```
+So about 95% of the variation in state-level age-adjusted heart-disease mortality(2014-2017) is explained by the random forest model using only Year and State
+
+```{r}
+ggplot(data = test, mapping = aes(x = Year)) +
+  
+  geom_line(mapping = aes(y = `Age-adjusted Death Rate`, color = "Actual")) +
+  
+  geom_line(mapping = aes(y = pred_m3, color = "Predicted (m3)")) +
+  
+  geom_line(mapping = aes(y = pred_mixed1, color = "Predicted (m1)")) +
+  
+  geom_line(mapping = aes(y = pred_rm, color = "Random Forest Model"))+
+  
+  facet_wrap(~ State, scales = "free_y") +
+  
+  labs(title = "Actual vs Predicted Heart Disease Mortality and Random Forest (Test Set: 2014–2017)") +
+  
+  scale_color_manual(values = c("Actual" = "black", "Predicted (m3)" = "blue", "Predicted (mixed m1)" = "red", "Random Forest Model" = "green"))
+```
+
+
+```{r}
+#Chapter 8 Diagnostic Tests
+
+#Residulas vs Fitted Values
+m3 <- lm(`Age-adjusted Death Rate` ~ State * Year, data = state_only)
+par(mfrow=c(2,2))
+plot(m3, 1)
+
+#Curvature Test
+residualPlot(m3) # gives quadratic test for year
+
+#Additional Test - add a quadratic year term 
+m3_quad = update(m3,~.+I(Year^2))
+
+#summary(m3)
+#summary(m3_quad)
+
+residualPlot(m3_quad)
+
+#Cook Test
+D_m3 <- cooks.distance(m3)
+sum(D_m3 > 1)
+
+qqnorm(resid(m3), main = "QQ Plot of Residuals for m3")
+qqline(resid(m3), col = "navy")
+
+#Extra - Shapiro-Wilk Test
+shapiro.test(resid(m3))
+```
+
+
+
+#Quantinfying whether states are becoming more similar or different 
+```{r}
+state_range = state_only |>
+  group_by(Year) |>
+  summarise(mean_val = mean(`Age-adjusted Death Rate`),
+            sd_val = sd(`Age-adjusted Death Rate`),
+            iqr_val = IQR(`Age-adjusted Death Rate`))
+
+ggplot(state_range, aes(x = Year, y = sd_val))+
+  geom_line()+
+  labs(
+    title = "Variation Between States in Heart Disease Mortality over time",
+    y = " Standard Deviation of Age-adjusted Death Rate"
+  )
+
+ggplot(state_range, aes(x = Year, y = iqr_val))+
+  geom_line()+
+  labs(
+    title = "Interquantile Range of State Heart Disease Mortality",
+    y = "Interquantile Range of Age-adjusted Death Rate"
+  )
+```
+
+Both SD and IQR of state heart-disease mortality fell
+While overall rates declined nationally, state rates became more similar to each other
