@@ -180,7 +180,7 @@ m3 <- lm(`Age-adjusted Death Rate` ~ Year * State, data = state_only)
 
 # mixed model?
 
-mixed1 <- lmer(`Age-adjusted Death Rate` ~ Year + (1 | State), data = state_only)
+#mixed1 <- lmer(`Age-adjusted Death Rate` ~ Year + (1 | State), data = state_only)
 #summary(mixed1)
 
 mixed2 <- lmer(`Age-adjusted Death Rate` ~ Year + (Year | State), data = state_only)
@@ -194,7 +194,7 @@ state_only <- state_only |>
     fitted_m1 = fitted(m1),
     fitted_m2 = fitted(m2),
     fitted_m3 = fitted(m3),
-    fitted_mixed1 = fitted(mixed1),
+    #fitted_mixed1 = fitted(mixed1),
     fitted_mixed2 = fitted(mixed2)
   )
 
@@ -206,6 +206,9 @@ ggplot(data = state_only, mapping = aes(x = Year)) +
   # actual data 
   geom_line(mapping = aes(y = `Age-adjusted Death Rate`, color = "Actual")) +
   
+  # linear
+  geom_line(mapping = aes(y = fitted_m1, color = "Simple Linear")) +
+  
   # year + state
   geom_line(mapping = aes(y = fitted_m2, color = "Fitted: Year + State"), linetype = "dashed") +
   
@@ -215,13 +218,13 @@ ggplot(data = state_only, mapping = aes(x = Year)) +
   facet_wrap(~ State, scales = "free_y") +
   
   labs(
-    title = "Comparison of (Year + State) vs Interaction (Year * State) Models",
-    y = "Age-Adjusted Heart Disease Death Rate",
-    color = ""
+    title = "Model Comparison: Simple Linear vs. Year + State vs. Year x State Models",
+    y = "Age-Adjusted Heart Disease Death Rate"
   ) +
   
   scale_color_manual(values = c(
     "Actual" = "black",
+    "Simple Linear" = "orange",
     "Fitted: Year + State" = "blue",
     "Fitted: Year * State" = "red"
   ))
@@ -235,7 +238,7 @@ ggplot(data = state_only, mapping = aes(x = Year)) +
   geom_line(aes(y = fitted_m3, color = "Fixed: Year * State"), linetype = "dashed") +
   
   # mixed1
-  geom_line(aes(y = fitted_mixed1, color = "Mixed: (1 | State)"), linetype = "dashed") +
+  #geom_line(aes(y = fitted_mixed1, color = "Mixed: (1 | State)"), linetype = "dashed") +
   
   # mixed2
   geom_line(mapping = aes(y = fitted_mixed2, color = "Mixed: (Year | State)"), linetype = "dotted") +
@@ -249,11 +252,23 @@ ggplot(data = state_only, mapping = aes(x = Year)) +
   ) +
   
   scale_color_manual(values = c(
-    "Actual"              = "black",
+    "Actual" = "black",
     "Fixed: Year * State" = "blue",
-    "Mixed: (1 | State)"  = "darkgreen",
+    #"Mixed: (1 | State)"  = "darkgreen",
     "Mixed: (Year | State)" = "red"
   ))
+
+```
+
+
+- Assumption checks for m1, m2,m3, 
+
+```{r}
+par(mfrow=c(2,2))
+plot(m1)
+plot(m2)
+plot(m3)
+
 
 ```
 
@@ -442,3 +457,98 @@ ggplot(state_range, aes(x = Year, y = iqr_val))+
 
 Both SD and IQR of state heart-disease mortality fell
 While overall rates declined nationally, state rates became more similar to each other
+
+
+
+
+```{r}
+library(splines)
+
+
+m_quad <- lm(`Age-adjusted Death Rate` ~ (Year + I(Year^2)) * State,
+             data = state_only)
+
+par(mfrow = c(2,2))
+plot(m_quad)
+
+
+m_spline <- lm(`Age-adjusted Death Rate` ~ ns(Year, df = 4) * State,
+               data = state_only)
+
+par(mfrow = c(2,2))
+plot(m_spline)
+
+
+# Add fitted values to the data
+state_only <- state_only |>
+  mutate(
+    fitted_spline  = fitted(m_spline)   # spline
+  )
+
+# Plot: Actual vs Linear vs Spline
+ggplot(data = state_only, aes(x = Year)) +
+  
+  # actual data 
+  geom_line(aes(y = `Age-adjusted Death Rate`, color = "Actual")) +
+  
+  # spline
+  geom_line(aes(y = fitted_spline, color = "Spline: ns(Year, 4) * State"),
+            linetype = "dashed") +
+  
+  facet_wrap(~ State, scales = "free_y") +
+  labs(
+    title = "Model Comparison: Simple Linear vs Spline by State",
+    y = "Age-Adjusted Heart Disease Death Rate",
+    color = ""
+  ) +
+  scale_color_manual(values = c(
+    "Actual"                      = "black",
+    "Spline: ns(Year, 4) * State" = "purple"
+  ))
+```
+
+```{r}
+
+set.seed(54)
+# train/test spline model
+
+m_spline <- lm(`Age-adjusted Death Rate` ~ ns(Year, 4) * State, data = train)
+
+
+# spline
+test$pred_spline <- predict(m_spline, newdata = test)
+
+rmse_spline  <- rmse(test$`Age-adjusted Death Rate`, test$pred_spline)
+mae_spline   <- mae(test$`Age-adjusted Death Rate`, test$pred_spline)
+
+ggplot(data = test, aes(x = Year)) +
+  
+  # actual data
+  geom_line(aes(y = `Age-adjusted Death Rate`, color = "Actual")) +
+  
+  # spline predicted
+  geom_line(aes(y = pred_spline, color = "Spline Model"), linewidth = 1) +
+  
+  facet_wrap(~ State, scales = "free_y") +
+  
+  labs(
+    title = "Actual vs Spline Model Predictions (Test Set)",
+    y = "Age-Adjusted Heart Disease Death Rate",
+    color = ""
+  ) +
+  
+  scale_color_manual(values = c( 
+    "Actual" = "black",
+    "Spline Model" = "purple"
+  ))
+
+data.frame(
+  Model = c("Spline Model (ns(Year,4)*State)",
+            "Random Forest (Year + State)"),
+  
+  RMSE = c(rmse_spline, rmse_rfm),
+  MAE  = c(mae_spline, mae_rfm)
+)
+
+
+```
