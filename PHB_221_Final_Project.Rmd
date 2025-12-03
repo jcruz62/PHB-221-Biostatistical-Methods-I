@@ -543,7 +543,7 @@ ggplot(data = test, aes(x = Year)) +
   ))
 
 data.frame(
-  Model = c("Spline Model (ns(Year,4)*State)",
+  Model = c("Spline Model",
             "Random Forest (Year + State)"),
   
   RMSE = c(rmse_spline, rmse_rfm),
