@@ -1,0 +1,528 @@
+---
+title: "PHB_221_Final_Project"
+author: "Abigail, Jade, Yinan"
+date: "2025-11-13"
+output: pdf_document
+---
+
+# Dataset and Libraries
+
+```{r}
+# libraries
+library(tidyverse)
+library(lme4)
+library(Metrics)
+library(randomForest)
+library(alr4)
+library(splines)
+
+set.seed(54)
+
+# dataset
+data <- read_csv("NCHS_-_Leading_Causes_of_Death__United_States.csv")
+```
+
+# Data Collection and Cleaning
+
+```{r}
+# view first few rows of data
+head(data)
+
+# check the number of rows and cols
+dim(data)
+
+# filter data
+filtered_data <- data[data$`Cause Name` == "Heart disease", ]
+
+head(filtered_data)
+
+dim(filtered_data)
+
+# missing data
+colSums(is.na(filtered_data))
+```
+
+# Explantory Analysis
+
+```{r}
+
+# national level
+national_data <- data |>
+  filter(`Cause Name` == "Heart disease", State == "United States")
+
+head(national_data)
+
+ggplot(data = national_data, mapping = aes(x = Year, y = `Age-adjusted Death Rate`)) +
+  geom_line() + 
+  labs(title = "National Age Adjusted Heart Disease Rate Over Time")
+
+# state level
+
+state_only <- filtered_data |>
+  filter(State != "United States") |>
+  mutate(
+    Region = case_when(
+      State %in% c("Maine", "New Hampshire", "Vermont", "Massachusetts",
+                   "Rhode Island", "Connecticut", "New York", "New Jersey",
+                   "Pennsylvania") ~ "Northeast",
+      State %in% c("Ohio", "Indiana", "Illinois", "Michigan", "Wisconsin",
+                   "Minnesota", "Iowa", "Missouri", "North Dakota", "South Dakota",
+                   "Nebraska", "Kansas") ~ "Midwest",
+      State %in% c("Delaware", "Maryland", "District of Columbia", "Virginia",
+                   "West Virginia", "North Carolina", "South Carolina", "Georgia",
+                   "Florida", "Kentucky", "Tennessee", "Alabama", "Mississippi",
+                   "Arkansas", "Louisiana", "Oklahoma", "Texas") ~ "South",
+      State %in% c("Montana", "Idaho", "Wyoming", "Colorado", "New Mexico",
+                   "Arizona", "Utah", "Nevada", "Washington", "Oregon", "California",
+                   "Alaska", "Hawaii") ~ "West"
+    )
+  )
+
+
+head(state_only)
+
+ggplot(data = state_only, mapping = aes(x = Year, y = `Age-adjusted Death Rate`)) + 
+  geom_line() + 
+  facet_wrap(~ State) +
+  labs(title = "State Age Adjusted Heart Disease Rate Over Time")
+
+
+# regional level
+regional_summary <- state_only |>
+  group_by(Region, Year) |>
+  summarise(
+    Rate = mean(`Age-adjusted Death Rate`)
+  )
+
+
+ggplot(data = regional_summary, mapping = aes(x = Year, y = Rate, color = Region)) + 
+  geom_line(linewidth = 1) +
+  labs(title = "Regional Age Adjusted Heart Disease Rate Over Time")
+
+ggplot(data = state_only, mapping = aes(x = Region, y = `Age-adjusted Death Rate`, color = Region)) +
+  geom_boxplot(staplewidth = 0.5) +
+  labs(title = "Age-Adjusted Heart Disease Mortality by Region")
+
+```
+
+
+# Statistical Testing
+
+  
+```{r}
+# two way anova testing
+# * (interaction term) bc each state has their own slope, if + was used then slope for Year is the same across all states
+two_way <- aov(`Age-adjusted Death Rate` ~ State * Year, data = state_only)
+summary(two_way)
+
+# check assumptions: homoscedasticity, normality of residuals, linearity, and influential pts
+par(mfrow = c(2,2))
+plot(two_way)
+
+D <- cooks.distance(two_way)
+sum(D > 1)
+```
+
+
+
+# Regression Analysis
+
+
+```{r}
+# simple linear regression
+m1 <- lm(`Age-adjusted Death Rate` ~ Year, data = state_only)
+#summary(m1)
+
+
+# multiple regression +
+m2 <- m_additive <- lm(`Age-adjusted Death Rate` ~ Year + State, data = state_only)
+#summary(m2)
+
+# multiple regression *
+m3 <- lm(`Age-adjusted Death Rate` ~ Year * State, data = state_only)
+#summary(m3)
+
+# mixed model does not work as slopes between states are too simila, receives convergence error
+
+#mixed1 <- lmer(`Age-adjusted Death Rate` ~ Year + (1 | State), data = state_only)
+#summary(mixed1)
+
+mixed2 <- lmer(`Age-adjusted Death Rate` ~ Year + (Year | State), data = state_only)
+#summary(mixed2)
+
+
+# plot comparison
+
+state_only <- state_only |>
+  mutate(
+    fitted_m1 = fitted(m1),
+    fitted_m2 = fitted(m2),
+    fitted_m3 = fitted(m3),
+    #fitted_mixed1 = fitted(mixed1),
+    fitted_mixed2 = fitted(mixed2)
+  )
+
+head(state_only)
+
+
+ggplot(data = state_only, mapping = aes(x = Year)) +
+  
+  # actual data 
+  geom_line(mapping = aes(y = `Age-adjusted Death Rate`, color = "Actual")) +
+  
+  # linear
+  geom_line(mapping = aes(y = fitted_m1, color = "Simple Linear")) +
+  
+  # year + state
+  geom_line(mapping = aes(y = fitted_m2, color = "Fitted: Year + State"), linetype = "dashed") +
+  
+  # year * state
+  geom_line(mapping = aes(y = fitted_m3, color = "Fitted: Year * State"), linetype = "dotted") +
+  
+  facet_wrap(~ State, scales = "free_y") +
+  
+  labs(
+    title = "Model Comparison: Simple Linear vs. Year + State vs. Year x State Models",
+    y = "Age-Adjusted Heart Disease Death Rate"
+  ) +
+  
+  scale_color_manual(values = c(
+    "Actual" = "black",
+    "Simple Linear" = "orange",
+    "Fitted: Year + State" = "blue",
+    "Fitted: Year * State" = "red"
+  ))
+
+
+ggplot(data = state_only, mapping = aes(x = Year)) +
+  # actual data
+  geom_line(mapping = aes(y = `Age-adjusted Death Rate`, color = "Actual")) +
+  
+  # m3
+  geom_line(aes(y = fitted_m3, color = "Fixed: Year * State"), linetype = "dashed") +
+  
+  # mixed1
+  #geom_line(aes(y = fitted_mixed1, color = "Mixed: (1 | State)"), linetype = "dashed") +
+  
+  # mixed2
+  # geom_line(mapping = aes(y = fitted_mixed2, color = "Mixed: (Year | State)"), linetype = "dotted") +
+  
+  facet_wrap(~ State, scales = "free_y") +
+  
+  labs(
+    title = "Actual vs Fixed-Effects and Mixed-Effects Models by State",
+    y = "Age-Adjusted Heart Disease Death Rate",
+    color = ""
+  ) +
+  
+  scale_color_manual(values = c(
+    "Actual" = "black",
+    "Fixed: Year * State" = "blue"
+    #"Mixed: (1 | State)"  = "darkgreen",
+    #"Mixed: (Year | State)" = "red"
+  ))
+
+```
+- Why mixed effects doesn't work?
+  - negative values
+```{r}
+# Random effects covariance matrix for (Intercept, Year) by State
+vc <- VarCorr(mixed2)$State
+Sigma <- as.matrix(vc)
+Sigma
+eigen(Sigma)$values
+
+# Check singularity
+isSingular(mixed2, tol = 1e-4)
+
+# Hessian eigenvalues
+H <- mixed2@optinfo$derivs$Hessian
+eigen(H)$values
+```
+
+- Assumption checks for m1, m2,m3
+
+```{r}
+par(mfrow=c(2,2))
+plot(m1)
+plot(m2)
+plot(m3)
+```
+
+- Main Focus m3 (multiple regression interaction)
+  - fix diagnostic check, mainly linearity
+  - tested with quadratic and splines
+
+```{r}
+m_quad <- lm(`Age-adjusted Death Rate` ~ (Year + I(Year^2)) * State,
+             data = state_only)
+
+par(mfrow = c(2,2))
+plot(m_quad)
+
+
+m_spline <- lm(`Age-adjusted Death Rate` ~ ns(Year, df = 4) * State,
+               data = state_only)
+
+par(mfrow = c(2,2))
+plot(m_spline)
+
+
+# Add fitted values to the data
+state_only <- state_only |>
+  mutate(
+    fitted_spline  = fitted(m_spline)   # spline
+  )
+
+# Plot: Actual vs Spline
+ggplot(data = state_only, aes(x = Year)) +
+  
+  # actual data 
+  geom_line(mapping = aes(y = `Age-adjusted Death Rate`, color = "Actual")) +
+  
+  # spline
+  geom_line(mapping = aes(y = fitted_spline, color = "Spline: ns(Year, 4) * State"),
+            linetype = "dashed") +
+  
+  facet_wrap(~ State, scales = "free_y") +
+  labs(
+    title = "Model Comparison: Actual vs Spline by State",
+    y = "Age-Adjusted Heart Disease Death Rate",
+  ) +
+  scale_color_manual(values = c(
+    "Actual"                      = "black",
+    "Spline: ns(Year, 4) * State" = "purple"
+  ))
+```
+# Predictive Modeling
+
+- Train Models:
+  - 80/10/10 does not work bc we cant randomly shuffle years
+  - plan: use most of data as train (80%), but still want to show something for presentation (20%)
+    - possible future direction: use a more updated dataset > 2017
+
+```{r}
+train <- state_only |>
+  filter(Year <= 2013)
+
+test <- state_only |>
+  filter(Year > 2013)
+
+# train models
+m2_train <- lm(`Age-adjusted Death Rate` ~ Year + State, data = train)
+m3_train <- lm(`Age-adjusted Death Rate` ~ Year * State, data = train)
+
+# predict on test set
+
+test$pred_m2 <- predict(m2_train, newdata = test)
+test$pred_m3 <- predict(m3_train, newdata = test)
+
+ggplot(data = test, mapping = aes(x = Year)) +
+  
+  geom_line(mapping = aes(y = `Age-adjusted Death Rate`, color = "Actual")) +
+  
+  geom_line(mapping = aes(y = pred_m2, color = "Predicted (m2)")) +
+  
+  geom_line(mapping = aes(y = pred_m3, color = "Predicted (m3)")) +
+  
+  facet_wrap(~ State, scales = "free_y") +
+  
+  labs(title = "Actual vs Predicted Heart Disease Mortality (Test Set: 2014–2017)") +
+  
+  scale_color_manual(values = c("Actual" = "black", "Predicted (m3)" = "blue", "Predicted (m2)" = "red"))
+
+
+```
+
+
+
+```{r}
+# train/test spline model
+
+m_spline <- lm(`Age-adjusted Death Rate` ~ ns(Year, 4) * State, data = train)
+
+
+# spline
+test$pred_spline <- predict(m_spline, newdata = test)
+
+rmse_spline  <- rmse(test$`Age-adjusted Death Rate`, test$pred_spline)
+mae_spline   <- mae(test$`Age-adjusted Death Rate`, test$pred_spline)
+
+ggplot(data = test, aes(x = Year)) +
+  
+  # actual data
+  geom_line(aes(y = `Age-adjusted Death Rate`, color = "Actual")) +
+  
+  # m3
+  geom_line(mapping = aes(y = pred_m3, color = "Predicted (m3)")) +
+  
+  # spline predicted
+  geom_line(aes(y = pred_spline, color = "Spline Model"), linewidth = 1) +
+  
+  facet_wrap(~ State, scales = "free_y") +
+  
+  labs(
+    title = "Actual vs Multiple Fixed Interaction (Test Set) vs Spline Model Predictions (Test Set)",
+    y = "Age-Adjusted Heart Disease Death Rate",
+    color = ""
+  ) +
+  
+  scale_color_manual(values = c( 
+    "Actual" = "black",
+    "Spline Model" = "purple",
+    "Predicted (m3)" = "orange"
+  ))
+
+
+
+```
+
+
+# Evaluation and Interpretation
+- look at RMSE and MAE
+- for final report go more in detail what these results mean
+
+```{r}
+# check models accuracies
+# RMSE and MAE
+rmse_m2 <- rmse(test$`Age-adjusted Death Rate`, test$pred_m2)
+mae_m2  <- mae(test$`Age-adjusted Death Rate`, test$pred_m2)
+
+rmse_m3 <- rmse(test$`Age-adjusted Death Rate`, test$pred_m3)
+mae_m3  <- mae(test$`Age-adjusted Death Rate`, test$pred_m3)
+
+rmse_spline <- rmse(test$`Age-adjusted Death Rate`, test$pred_spline)
+mae_spline  <- mae(test$`Age-adjusted Death Rate`, test$pred_spline)
+
+# accuracies
+data.frame(
+  Model = c("m2 (Year+State)", "m3 (Year*State)", "m_spline"),
+  RMSE = c(rmse_m2, rmse_m3, rmse_spline),
+  MAE  = c(mae_m2, mae_m3, mae_spline)
+)
+
+```
+
+
+
+# Random Forest
+```{r}
+train$State = factor(train$State)
+test$State = factor(test$State)
+
+rm_model = randomForest(`Age-adjusted Death Rate`~Year+State, data = train, ntree = 1000, mtry = 2, importance = T)
+
+print(rm_model)
+
+test$pred_rm = predict(rm_model, newdata=test)
+rmse_rfm = rmse(test$`Age-adjusted Death Rate`, test$pred_rm)
+mae_rfm = mae(test$`Age-adjusted Death Rate`, test$pred_rm)
+
+```
+
+```{r}
+# R^2
+y_test = test$`Age-adjusted Death Rate`
+y_rmf = test$pred_rm
+
+ss_res = sum((y_test - y_rmf)^2)
+ss_tot = sum((y_test-mean(y_test))^2)
+R2_rmf = 1 - ss_res/ss_tot
+
+R2_rmf
+```
+So about 95% of the variation in state-level age-adjusted heart-disease mortality(2014-2017) is explained by the random forest model using only Year and State
+
+```{r}
+ggplot(data = test, mapping = aes(x = Year)) +
+  
+  geom_line(mapping = aes(y = `Age-adjusted Death Rate`, color = "Actual")) +
+  
+  geom_line(mapping = aes(y = pred_m3, color = "Predicted (m3)")) +
+  
+  #geom_line(mapping = aes(y = pred_mixed1, color = "Predicted (m1)")) +
+  
+  geom_line(mapping = aes(y = pred_spline, color = "Predicted (m_spline)")) +
+  
+  geom_line(mapping = aes(y = pred_rm, color = "Random Forest Model"))+
+  
+  facet_wrap(~ State, scales = "free_y") +
+  
+  labs(title = "Actual vs Predicted Heart Disease Mortality and Random Forest (Test Set: 2014–2017)") +
+  
+  scale_color_manual(values = c("Actual" = "black", "Predicted (m3)" = "blue", "Random Forest Model" = "green", "Predicted (m_spline)" = "purple"))
+
+data.frame(
+  Model = c("m2 (Year+State)", "m3 (Year*State)", "m_spline", "RF (Year + State)"),
+  RMSE = c(rmse_m2, rmse_m3 , rmse_spline, rmse_rfm),
+  MAE  = c(mae_m2, mae_m3, mae_spline, mae_rfm)
+)
+
+```
+
+# Extras
+- trying quadratic fix for fixed interaction model
+
+```{r}
+#Chapter 8 Diagnostic Tests
+
+#Residulas vs Fitted Values
+m3 <- lm(`Age-adjusted Death Rate` ~ State * Year, data = state_only)
+par(mfrow=c(2,2))
+plot(m3, 1)
+
+#Curvature Test
+residualPlot(m3) # gives quadratic test for year
+
+#Additional Test - add a quadratic year term 
+m3_quad = update(m3,~.+I(Year^2))
+
+#summary(m3)
+#summary(m3_quad)
+
+residualPlot(m3_quad)
+
+#Cook Test
+D_m3 <- cooks.distance(m3)
+sum(D_m3 > 1)
+
+qqnorm(resid(m3), main = "QQ Plot of Residuals for m3")
+qqline(resid(m3), col = "navy")
+
+#Extra - Shapiro-Wilk Test
+shapiro.test(resid(m3))
+```
+
+
+
+#Quantinfying whether states are becoming more similar or different 
+```{r}
+state_range = state_only |>
+  group_by(Year) |>
+  summarise(mean_val = mean(`Age-adjusted Death Rate`),
+            sd_val = sd(`Age-adjusted Death Rate`),
+            iqr_val = IQR(`Age-adjusted Death Rate`))
+
+ggplot(state_range, aes(x = Year, y = sd_val))+
+  geom_line()+
+  labs(
+    title = "Variation Between States in Heart Disease Mortality over time",
+    y = " Standard Deviation of Age-adjusted Death Rate"
+  )
+
+ggplot(state_range, aes(x = Year, y = iqr_val))+
+  geom_line()+
+  labs(
+    title = "Interquantile Range of State Heart Disease Mortality",
+    y = "Interquantile Range of Age-adjusted Death Rate"
+  )
+```
+
+Both SD and IQR of state heart-disease mortality fell
+While overall rates declined nationally, state rates became more similar to each other
+
+
+
+
+
+
