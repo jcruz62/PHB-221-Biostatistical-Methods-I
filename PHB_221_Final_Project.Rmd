@@ -396,9 +396,9 @@ mae_spline  <- mae(test$`Age-adjusted Death Rate`, test$pred_spline)
 
 # accuracies
 data.frame(
-  Model = c("m2 (Year+State)", "m3 (Year*State)", "m_spline"),
-  RMSE = c(rmse_m2, rmse_m3, rmse_spline),
-  MAE  = c(mae_m2, mae_m3, mae_spline)
+  Model = c("m3 (Year*State)", "m_spline"),
+  RMSE = c(rmse_m3, rmse_spline),
+  MAE  = c(mae_m3, mae_spline)
 )
 
 ```
@@ -410,7 +410,7 @@ data.frame(
 train$State = factor(train$State)
 test$State = factor(test$State)
 
-rm_model = randomForest(`Age-adjusted Death Rate`~Year+State, data = train, ntree = 1000, mtry = 2, importance = T)
+rm_model = randomForest(`Age-adjusted Death Rate`~Year*State, data = train, ntree = 1000, mtry = 2, importance = T)
 
 print(rm_model)
 
@@ -453,73 +453,17 @@ ggplot(data = test, mapping = aes(x = Year)) +
   scale_color_manual(values = c("Actual" = "black", "Predicted (m3)" = "blue", "Random Forest Model" = "green", "Predicted (m_spline)" = "purple"))
 
 data.frame(
-  Model = c("m2 (Year+State)", "m3 (Year*State)", "m_spline", "RF (Year + State)"),
-  RMSE = c(rmse_m2, rmse_m3 , rmse_spline, rmse_rfm),
-  MAE  = c(mae_m2, mae_m3, mae_spline, mae_rfm)
+  Model = c("m3 (Year*State)", "m_spline", "RF (Year * State)"),
+  RMSE = c(rmse_m3 , rmse_spline, rmse_rfm),
+  MAE  = c(mae_m3, mae_spline, mae_rfm)
 )
 
 ```
 
-# Extras
-- trying quadratic fix for fixed interaction model
-
-```{r}
-#Chapter 8 Diagnostic Tests
-
-#Residulas vs Fitted Values
-m3 <- lm(`Age-adjusted Death Rate` ~ State * Year, data = state_only)
-par(mfrow=c(2,2))
-plot(m3, 1)
-
-#Curvature Test
-residualPlot(m3) # gives quadratic test for year
-
-#Additional Test - add a quadratic year term 
-m3_quad = update(m3,~.+I(Year^2))
-
-#summary(m3)
-#summary(m3_quad)
-
-residualPlot(m3_quad)
-
-#Cook Test
-D_m3 <- cooks.distance(m3)
-sum(D_m3 > 1)
-
-qqnorm(resid(m3), main = "QQ Plot of Residuals for m3")
-qqline(resid(m3), col = "navy")
-
-#Extra - Shapiro-Wilk Test
-shapiro.test(resid(m3))
-```
 
 
 
-#Quantinfying whether states are becoming more similar or different 
-```{r}
-state_range = state_only |>
-  group_by(Year) |>
-  summarise(mean_val = mean(`Age-adjusted Death Rate`),
-            sd_val = sd(`Age-adjusted Death Rate`),
-            iqr_val = IQR(`Age-adjusted Death Rate`))
 
-ggplot(state_range, aes(x = Year, y = sd_val))+
-  geom_line()+
-  labs(
-    title = "Variation Between States in Heart Disease Mortality over time",
-    y = " Standard Deviation of Age-adjusted Death Rate"
-  )
-
-ggplot(state_range, aes(x = Year, y = iqr_val))+
-  geom_line()+
-  labs(
-    title = "Interquantile Range of State Heart Disease Mortality",
-    y = "Interquantile Range of Age-adjusted Death Rate"
-  )
-```
-
-Both SD and IQR of state heart-disease mortality fell
-While overall rates declined nationally, state rates became more similar to each other
 
 
 
